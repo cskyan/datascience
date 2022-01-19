@@ -21,12 +21,24 @@ import gspread
 import pandas as pd
 from openpyxl.utils.cell import get_column_letter
 
+
+GDRIVE_ROOT_PATH = '/content/gdrive'
+
+
+def mkdir(path):
+  if path and not os.path.exists(path):
+    print(("Creating folder: " + path))
+    os.makedirs(path)
+    drive.flush_and_unmount() # To be replace by drive.flush()
+    drive.mount(GDRIVE_ROOT_PATH)
+
+mkdir(GDRIVE_ROOT_PATH)
 auth.authenticate_user()
-drive.mount('/content/drive')
-GDRIVE_PATH = '/content/drive/MyDrive'
+drive.mount(GDRIVE_ROOT_PATH)
+GDRIVE_PATH = os.path.join(GDRIVE_ROOT_PATH, 'MyDrive')
 
 DATA_ROOT_PATH = os.path.join(GDRIVE_PATH, 'notebooks/data')
-DATA_ROOT_ID = '1DH_prQ_Wg3hRHBWNnj00e4Nk4zZ4CGAh'
+DATA_ROOT_ID = ''
 
 gcred = GoogleCredentials.get_application_default()
 gauth = GoogleAuth()
@@ -38,14 +50,6 @@ GDRIVE_SPREADSHEET_TYPE = 'application/vnd.google-apps.spreadsheet'
 GSC = gspread.authorize(gcred)
 
 GMETA_TEMPLATE = {'spreadsheet':{}}
-
-
-def mkdir(path):
-  if path and not os.path.exists(path):
-    print(("Creating folder: " + path))
-    os.makedirs(path)
-    drive.flush_and_unmount() # To be replace by drive.flush()
-    drive.mount('/content/drive')
 
 
 class GMeta(object):
@@ -75,7 +79,7 @@ class GMeta(object):
 def rect2range(rect):
   return '%s%i:%s%i' % (get_column_letter(rect[1]+1), rect[0]+1, get_column_letter(rect[1]+rect[3]), rect[0]+rect[2])
 
-def get_sheet(gsheet, sheet='sheet1'):
+def get_gsheet(gsheet, sheet='sheet1'):
   if type(sheet) is int:
     worksheet = gsheet.get_worksheet(sheet)
   elif type(sheet) is str and sheet != 'sheet1':
@@ -115,7 +119,7 @@ def to_gsheet(dataframe, fpath=None, folder_id=None, sheet='sheet1', columns=Non
       found_folder_id = search_folder_id
   # Get worksheet
   gsheet = GSC.create(gs_name, folder_id=found_folder_id)
-  worksheet = get_sheet(gsheet, sheet=sheet)
+  worksheet = get_gsheet(gsheet, sheet=sheet)
 
   # Determine the range of sheet columns, index, data and update the values
   if header:
@@ -155,7 +159,7 @@ def read_gsheet(fpath=None, gsheet_id=None, sheet='sheet1', header=True, names=N
   elif gsheet_id is not None:
     try:
       gsheet = GSC.open_by_key(gsheet_id)
-      worksheet = get_sheet(gsheet, sheet=sheet)
+      worksheet = get_gsheet(gsheet, sheet=sheet)
     except Exception as e:
       if fpath is None:
         print('Inexisted sheet ID: %s' % gsheet_id)
@@ -195,7 +199,7 @@ def read_gsheet(fpath=None, gsheet_id=None, sheet='sheet1', header=True, names=N
       except Exception as e:
         print(e)
     gsheet = GSC.open_by_key(gsheet_id)
-    worksheet = get_sheet(gsheet, sheet=sheet)
+    worksheet = get_gsheet(gsheet, sheet=sheet)
 
   sheet_values = worksheet.get_all_values()
   if header:
@@ -218,3 +222,20 @@ def read_gsheet(fpath=None, gsheet_id=None, sheet='sheet1', header=True, names=N
       except Exception as e:
         print('Cannot set the dtype of column %s as %s!' % (k, v))
   return dataframe
+
+
+def batch_pd2gsh(dir_path, read_kwargs={}, write_kwargs={}):
+    if not os.path.exists(dir_path): return []
+    return [to_gsheet(pd.read_csv(os.path.join(dir_path, fname), **read_kwargs), os.splitext(fname)[0], **write_kwargs) for fname in fs.listf(dir_path, pattern='.*\.csv', ret_fullpath=False)]
+
+
+def batch_gsh2pd(dir_path=None, gsheet_ids=None, read_kwargs={}, write_kwargs={}):
+    return [read_gsheet(os.path.join(dir_path, fname), **read_gsheet).to_csv('%s.csv'%os.splitext(fname)[0]) for fname in fs.listf(dir_path, pattern='.*\.gsheet', ret_fullpath=False)]
+
+
+def main():
+    pass
+
+
+if __name__ == '__main__':
+    main()
