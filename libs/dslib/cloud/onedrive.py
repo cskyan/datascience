@@ -74,6 +74,42 @@ class InteractiveCMD(object):
     	except queue.Empty:
     		return out_str
 
+
+class CloudShell(object):
+    def __init__(self, cloud_path_root, local_path_root):
+        self.cloud_path_root = os.path.abspath(cloud_path_root)
+        self.local_path_root = os.path.abspath(local_path_root)
+
+    def sync(self, fpath):
+        local_fpath = os.path.abspath(fpath)
+        if not local_fpath.startswith(self.local_path_root):
+            print('The file [%s] is not mapped to cloud location [%s]!' % (fpath, self.cloud_path_root))
+            return False
+        relative_fpath = os.path.relpath(local_fpath, self.local_path_root)
+        cloud_fpath = os.path.join(self.cloud_path_root, relative_fpath)
+        if not os.path.exists(local_fpath):
+            if os.path.exists(cloud_fpath):
+                mkdir(os.path.dirname(local_fpath))
+                import shutil
+                shutil.copy(cloud_fpath, local_fpath)
+            else:
+                print('Cannot find file [%s] on the cloud!' % cloud_fpath)
+                return False
+        return True
+
+    def batch_sync(self, fpaths):
+        for fpath in fpaths: self.sync(fpath)
+
+    def open(self, fpath, *args, **kwargs):
+        if not self.sync(fpath): return None
+        return open(fpath, *args, **kwargs)
+
+    def read_csv(self, fpath, *args, **kwargs):
+        if not self.sync(fpath): return None
+        import pandas
+        return pandas.read_csv(fpath, *args, **kwargs)
+
+
 def mount(verbose=False):
     mount_prefix = input('Please input the mount location [default: /content]:').rstrip('/') or '/content'
     conn_name = input('Please input a connection name [default: %s]:' % DEFAULT_CONN_NAME) or DEFAULT_CONN_NAME
