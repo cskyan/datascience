@@ -87,7 +87,12 @@ class CloudShell(object):
             return False
         relative_fpath = os.path.relpath(local_fpath, self.local_path_root)
         cloud_fpath = os.path.join(self.cloud_path_root, relative_fpath)
-        if not os.path.exists(local_fpath):
+        if os.path.exists(local_fpath):
+            if not os.path.exists(cloud_fpath) or ( os.path.exists(cloud_fpath) and os.path.getmtime(cloud_fpath) < os.path.getmtime(local_fpath)):
+                mkdir(os.path.dirname(cloud_fpath))
+                import shutil
+                shutil.copy(local_fpath, cloud_fpath)
+        else:
             if os.path.exists(cloud_fpath):
                 mkdir(os.path.dirname(local_fpath))
                 import shutil
@@ -110,10 +115,10 @@ class CloudShell(object):
         return pandas.read_csv(fpath, *args, **kwargs)
 
 
-def mount(verbose=False):
-    mount_prefix = input('Please input the mount location [default: /content]:').rstrip('/') or '/content'
-    conn_name = input('Please input a connection name [default: %s]:' % DEFAULT_CONN_NAME) or DEFAULT_CONN_NAME
-    config_token = input('Please input your config token: \nHint: You may get it by executing `rclone authorize "onedrive"` \n')
+def mount(prefix=None, conn=None, token=None, verbose=False):
+    mount_prefix = input('Please input the mount location [default: /content]:').rstrip('/') or '/content' if prefix is None else str(prefix)
+    conn_name = input('Please input a connection name [default: %s]:' % DEFAULT_CONN_NAME) or DEFAULT_CONN_NAME if conn is None else str(conn)
+    config_token = input('Please input your config token: \nHint: You may get it by executing `rclone authorize "onedrive"` \n') if token is None else str(token)
     cmd = InteractiveCMD('rclone config')
     cmd.start(verbose=verbose)
     cmd.inputs(['n',conn_name, '27', '', '', '1', 'n', 'n', config_token, '', '1', 'y', 'q'], intervel=3, verbose=verbose)

@@ -87,7 +87,12 @@ class CloudShell(object):
             return False
         relative_fpath = os.path.relpath(local_fpath, self.local_path_root)
         cloud_fpath = os.path.join(self.cloud_path_root, relative_fpath)
-        if not os.path.exists(local_fpath):
+        if os.path.exists(local_fpath):
+            if not os.path.exists(cloud_fpath) or ( os.path.exists(cloud_fpath) and os.path.getmtime(cloud_fpath) < os.path.getmtime(local_fpath)):
+                mkdir(os.path.dirname(cloud_fpath))
+                import shutil
+                shutil.copy(local_fpath, cloud_fpath)
+        else:
             if os.path.exists(cloud_fpath):
                 mkdir(os.path.dirname(local_fpath))
                 import shutil
@@ -110,16 +115,18 @@ class CloudShell(object):
         return pandas.read_csv(fpath, *args, **kwargs)
 
 
-def mount(verbose=False):
-    mount_prefix = input('Please input the mount location [default: /content]:').rstrip('/') or '/content'
-    conn_name = input('Please input a connection name [default: %s]:' % DEFAULT_CONN_NAME) or DEFAULT_CONN_NAME
-    refresh_token = input('Please input your refresh token: \nHint: You may get it through https://media.cooluc.com/decode_token/` \n')
-    server_port = input('Please input the webdav server port [default: 8081]:') or '8081'
+def mount(prefix=None, conn=None, token=None, srv_port=None, verbose=False):
+    mount_prefix = input('Please input the mount location [default: /content]:').rstrip('/') or '/content' if prefix is None else str(prefix)
+    conn_name = input('Please input a connection name [default: %s]:' % DEFAULT_CONN_NAME) or DEFAULT_CONN_NAME if conn is None else str(conn)
+    refresh_token = input('Please input your refresh token: \nHint: You may get it through https://media.cooluc.com/decode_token/` \n') if token is None else str(token)
+    server_port = input('Please input the webdav server port [default: 8081]:') or '8081' if srv_port is None else srv_port
     os.system('nohup java -jar webdav.jar --server.port=%s --aliyundrive.refresh-token=%s >/var/log/webdav-aliyundrive.log 2>&1 &' % (server_port, refresh_token))
+    if verbose: print('Check webdav log in /var/log/webdav-aliyundrive.log')
     cmd = InteractiveCMD('rclone config')
     cmd.start(verbose=verbose)
     cmd.inputs(['n',conn_name, '40', 'http://127.0.0.1:%s'%server_port, '5', 'admin', 'y', 'admin', 'admin', '', 'n', 'y', 'q'], intervel=3, verbose=verbose)
     os.system('sudo nohup rclone --vfs-cache-mode writes mount %s: %s/%s >/var/log/rclone_aliyundrive.log 2>&1 &' % (conn_name, mount_prefix, conn_name))
+    if verbose: print('Check rclone log in /var/log/rclone_aliyundrive.log')
     ONEDRIVE_PATH = '%s/%s' % (mount_prefix, conn_name)
     mkdir(ONEDRIVE_PATH)
     DATA_ROOT_PATH = os.path.join(ONEDRIVE_PATH, 'notebooks/data')
