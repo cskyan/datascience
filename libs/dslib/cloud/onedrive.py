@@ -114,6 +114,11 @@ class CloudShell(object):
         import pandas
         return pandas.read_csv(fpath, *args, **kwargs)
 
+    def read_excel(self, fpath, *args, **kwargs):
+        if not self.sync(fpath): return None
+        import pandas
+        return pandas.read_excel(fpath, *args, **kwargs)
+
 
 def mount(prefix=None, conn=None, token=None, verbose=False):
     mount_prefix = input('Please input the mount location [default: /content]:').rstrip('/') or '/content' if prefix is None else str(prefix)
