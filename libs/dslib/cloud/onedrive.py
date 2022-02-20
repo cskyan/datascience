@@ -15,15 +15,35 @@ import subprocess, queue, threading
 RCLONE_VERSION = '1.57.0'
 DEFAULT_CONN_NAME = 'onedrive'
 ONEDRIVE_PATH = '/content/%s' % DEFAULT_CONN_NAME
+DATA_ROOT_PATH = os.path.join(ONEDRIVE_PATH, 'notebooks/data')
 
-def mkdir(path):
+
+os.system('sudo apt -qq install fuse -y')
+
+
+def mkdir(path, verbose=False):
   if path and not os.path.exists(path):
-    print(("Creating folder: " + path))
+    if verbose: print(("Creating folder: " + path))
     os.makedirs(path)
 
-os.system('wget https://downloads.rclone.org/v%s/rclone-v%s-linux-amd64.deb && sudo apt install ./rclone-v%s-linux-amd64.deb' % (RCLONE_VERSION, RCLONE_VERSION, RCLONE_VERSION))
-os.system('rm ./rclone-v%s-linux-amd64.deb' % RCLONE_VERSION)
-DATA_ROOT_PATH = os.path.join(ONEDRIVE_PATH, 'notebooks/data')
+
+def fixdir(path, default_reldir='.', verbose=False):
+    try:
+        mkdir(path, verbose=verbose)
+        if not os.access(path, os.W_OK): raise PermissionError('Cannot access `%s` !' % path)
+        return os.path.abspath(path)
+    except Exception as e:
+        if verbose: print(e)
+        default_dir = os.path.join('.', default_reldir)
+        mkdir(default_dir, verbose=verbose)
+        return os.path.abspath(default_dir)
+
+
+def download(cache_dir='.cache', pkg_versions={}, ignore_cache=False, verbose=False):
+    cache_dir = fixdir(cache_dir, default_reldir='.cache', verbose=verbose)
+    if ignore_cache or not os.path.exists(os.path.join(cache_dir, 'rclone-v%s-linux-amd64.deb' % pkg_versions.setdefault('rclone', RCLONE_VERSION))):
+        os.system('wget %s https://downloads.rclone.org/v%s/rclone-v%s-linux-amd64.deb -P %s' % ('' if verbose else '-q', pkg_versions.setdefault('rclone', RCLONE_VERSION), pkg_versions.setdefault('rclone', RCLONE_VERSION), cache_dir))
+    os.system('sudo apt %s install %s' % ('' if verbose else '-qq', os.path.join(cache_dir, 'rclone-v%s-linux-amd64.deb' % pkg_versions.setdefault('rclone', RCLONE_VERSION))))
 
 
 class InteractiveCMD(object):
@@ -76,9 +96,10 @@ class InteractiveCMD(object):
 
 
 class CloudShell(object):
-    def __init__(self, cloud_path_root, local_path_root):
+    def __init__(self, cloud_path_root, local_path_root, verbose=False):
         self.cloud_path_root = os.path.abspath(cloud_path_root)
         self.local_path_root = os.path.abspath(local_path_root)
+        self.verbose = verbose
 
     def sync(self, fpath):
         local_fpath = os.path.abspath(fpath)
@@ -89,12 +110,12 @@ class CloudShell(object):
         cloud_fpath = os.path.join(self.cloud_path_root, relative_fpath)
         if os.path.exists(local_fpath):
             if not os.path.exists(cloud_fpath) or ( os.path.exists(cloud_fpath) and os.path.getmtime(cloud_fpath) < os.path.getmtime(local_fpath)):
-                mkdir(os.path.dirname(cloud_fpath))
+                mkdir(os.path.dirname(cloud_fpath), verbose=self.verbose)
                 import shutil
                 shutil.copy(local_fpath, cloud_fpath)
         else:
             if os.path.exists(cloud_fpath):
-                mkdir(os.path.dirname(local_fpath))
+                mkdir(os.path.dirname(local_fpath), verbose=self.verbose)
                 import shutil
                 shutil.copy(cloud_fpath, local_fpath)
             else:
@@ -120,16 +141,20 @@ class CloudShell(object):
         return pandas.read_excel(fpath, *args, **kwargs)
 
 
-def mount(prefix=None, conn=None, token=None, verbose=False):
+def mount(prefix=None, conn=None, token=None, log_dir='/var/log', remount=True, verbose=False):
+    log_dir = fixdir(log_dir, default_reldir='log', verbose=verbose)
     mount_prefix = input('Please input the mount location [default: /content]:').rstrip('/') or '/content' if prefix is None else str(prefix)
     conn_name = input('Please input a connection name [default: %s]:' % DEFAULT_CONN_NAME) or DEFAULT_CONN_NAME if conn is None else str(conn)
     config_token = input('Please input your config token: \nHint: You may get it by executing `rclone authorize "onedrive"` \n') if token is None else str(token)
-    cmd = InteractiveCMD('rclone config')
-    cmd.start(verbose=verbose)
-    cmd.inputs(['n',conn_name, '27', '', '', '1', 'n', 'n', config_token, '', '1', 'y', 'q'], intervel=3, verbose=verbose)
-    os.system('sudo nohup rclone --vfs-cache-mode writes mount %s: %s/%s >/var/log/rclone_onedrive.log 2>&1 &' % (conn_name, mount_prefix, conn_name))
+    if remount or subprocess.check_output('CONN=`rclone config show | grep -w "\[%s\]"`; if [ -z "$CONN" ]; then echo false; else echo true; fi' % conn_name, shell=True).decode('utf-8').strip('\n') == 'false':
+        os.system('rclone config delete %s' % conn_name)
+        cmd = InteractiveCMD('rclone config')
+        cmd.start(verbose=verbose)
+        cmd.inputs(['n',conn_name, '27', '', '', '1', 'n', 'n', config_token, '', '1', 'y', 'q'], intervel=3, verbose=verbose)
+        os.system('nohup rclone --allow-non-empty --vfs-cache-mode writes mount %s: %s/%s >%s/rclone_onedrive.log 2>&1 &' % (conn_name, mount_prefix, conn_name, log_dir))
+        if verbose: print('Check rclone log in %s/rclone_onedrive.log' % log_dir)
     ONEDRIVE_PATH = '%s/%s' % (mount_prefix, conn_name)
-    mkdir(ONEDRIVE_PATH)
+    mkdir(ONEDRIVE_PATH, verbose=verbose)
     DATA_ROOT_PATH = os.path.join(ONEDRIVE_PATH, 'notebooks/data')
 
 

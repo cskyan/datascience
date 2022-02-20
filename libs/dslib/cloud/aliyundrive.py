@@ -12,18 +12,41 @@ import os, time
 import subprocess, queue, threading
 
 RCLONE_VERSION = '1.57.0'
+ALIYUNDRIVE_VERSION = '2.4.0'
 DEFAULT_CONN_NAME = 'aliyundrive'
 ONEDRIVE_PATH = '/content/%s' % DEFAULT_CONN_NAME
+DATA_ROOT_PATH = os.path.join(ONEDRIVE_PATH, 'notebooks/data')
 
-def mkdir(path):
+
+os.system('sudo apt -qq update && sudo apt -qq install default-jre -y')
+os.system('sudo apt -qq install fuse -y')
+
+
+def mkdir(path, verbose=False):
   if path and not os.path.exists(path):
-    print(("Creating folder: " + path))
+    if verbose: print(("Creating folder: " + path))
     os.makedirs(path)
 
-os.system('wget https://storage.googleapis.com/publicapps/webdav-aliyundrive-2.4.0.jar && mv webdav-aliyundrive-2.4.0.jar webdav.jar')
-os.system('wget https://downloads.rclone.org/v%s/rclone-v%s-linux-amd64.deb && sudo apt install ./rclone-v%s-linux-amd64.deb' % (RCLONE_VERSION, RCLONE_VERSION, RCLONE_VERSION))
-os.system('rm ./rclone-v%s-linux-amd64.deb' % RCLONE_VERSION)
-DATA_ROOT_PATH = os.path.join(ONEDRIVE_PATH, 'notebooks/data')
+
+def fixdir(path, default_reldir='.', verbose=False):
+    try:
+        mkdir(path, verbose=verbose)
+        if not os.access(path, os.W_OK): raise PermissionError('Cannot access `%s` !' % path)
+        return os.path.abspath(path)
+    except Exception as e:
+        if verbose: print(e)
+        default_dir = os.path.join('.', default_reldir)
+        mkdir(default_dir, verbose=verbose)
+        return os.path.abspath(default_dir)
+
+
+def download(cache_dir='.cache', pkg_versions={}, ignore_cache=False, verbose=False):
+    cache_dir = fixdir(cache_dir, default_reldir='.cache', verbose=verbose)
+    if ignore_cache or not os.path.exists('webdav.jar'):
+        os.system('wget %s https://storage.googleapis.com/publicapps/webdav-aliyundrive-%s.jar && mv webdav-aliyundrive-%s.jar webdav.jar' % ('' if verbose else '-q', pkg_versions.setdefault('aliyundrive', ALIYUNDRIVE_VERSION), pkg_versions.setdefault('aliyundrive', ALIYUNDRIVE_VERSION)))
+    if ignore_cache or not os.path.exists(os.path.join(cache_dir, 'rclone-v%s-linux-amd64.deb' % pkg_versions.setdefault('rclone', RCLONE_VERSION))):
+        os.system('wget %s https://downloads.rclone.org/v%s/rclone-v%s-linux-amd64.deb -P %s' % ('' if verbose else '-q', pkg_versions.setdefault('rclone', RCLONE_VERSION), pkg_versions.setdefault('rclone', RCLONE_VERSION), cache_dir))
+    os.system('sudo apt %s install %s' % ('' if verbose else '-qq', os.path.join(cache_dir, 'rclone-v%s-linux-amd64.deb' % pkg_versions.setdefault('rclone', RCLONE_VERSION))))
 
 
 class InteractiveCMD(object):
@@ -76,9 +99,10 @@ class InteractiveCMD(object):
 
 
 class CloudShell(object):
-    def __init__(self, cloud_path_root, local_path_root):
+    def __init__(self, cloud_path_root, local_path_root, verbose=False):
         self.cloud_path_root = os.path.abspath(cloud_path_root)
         self.local_path_root = os.path.abspath(local_path_root)
+        self.verbose = verbose
 
     def sync(self, fpath):
         local_fpath = os.path.abspath(fpath)
@@ -89,12 +113,12 @@ class CloudShell(object):
         cloud_fpath = os.path.join(self.cloud_path_root, relative_fpath)
         if os.path.exists(local_fpath):
             if not os.path.exists(cloud_fpath) or ( os.path.exists(cloud_fpath) and os.path.getmtime(cloud_fpath) < os.path.getmtime(local_fpath)):
-                mkdir(os.path.dirname(cloud_fpath))
+                mkdir(os.path.dirname(cloud_fpath), verbose=self.verbose)
                 import shutil
                 shutil.copy(local_fpath, cloud_fpath)
         else:
             if os.path.exists(cloud_fpath):
-                mkdir(os.path.dirname(local_fpath))
+                mkdir(os.path.dirname(local_fpath), verbose=self.verbose)
                 import shutil
                 shutil.copy(cloud_fpath, local_fpath)
             else:
@@ -120,20 +144,24 @@ class CloudShell(object):
         return pandas.read_excel(fpath, *args, **kwargs)
 
 
-def mount(prefix=None, conn=None, token=None, srv_port=None, verbose=False):
+def mount(prefix=None, conn=None, token=None, srv_port=None, log_dir='/var/log', remount=True, verbose=False):
+    log_dir = fixdir(log_dir, default_reldir='log', verbose=verbose)
     mount_prefix = input('Please input the mount location [default: /content]:').rstrip('/') or '/content' if prefix is None else str(prefix)
     conn_name = input('Please input a connection name [default: %s]:' % DEFAULT_CONN_NAME) or DEFAULT_CONN_NAME if conn is None else str(conn)
     refresh_token = input('Please input your refresh token: \nHint: You may get it through https://media.cooluc.com/decode_token/` \n') if token is None else str(token)
     server_port = input('Please input the webdav server port [default: 8081]:') or '8081' if srv_port is None else srv_port
-    os.system('nohup java -jar webdav.jar --server.port=%s --aliyundrive.refresh-token=%s >/var/log/webdav-aliyundrive.log 2>&1 &' % (server_port, refresh_token))
-    if verbose: print('Check webdav log in /var/log/webdav-aliyundrive.log')
-    cmd = InteractiveCMD('rclone config')
-    cmd.start(verbose=verbose)
-    cmd.inputs(['n',conn_name, '40', 'http://127.0.0.1:%s'%server_port, '5', 'admin', 'y', 'admin', 'admin', '', 'n', 'y', 'q'], intervel=3, verbose=verbose)
-    os.system('sudo nohup rclone --vfs-cache-mode writes mount %s: %s/%s >/var/log/rclone_aliyundrive.log 2>&1 &' % (conn_name, mount_prefix, conn_name))
-    if verbose: print('Check rclone log in /var/log/rclone_aliyundrive.log')
+    os.system('''RUNNING=`ps aux | grep 'java -jar webdav.jar' | grep -v grep`; if [ -z "$RUNNING" ]; then rclone config delete %s && sudo nohup java -jar webdav.jar --server.port=%s --aliyundrive.refresh-token=%s >%s/webdav-aliyundrive.log 2>&1 & fi''' % (conn_name, server_port, refresh_token, log_dir))
+    if verbose: print('Check webdav log in %s/webdav-aliyundrive.log' % log_dir)
+    if remount or subprocess.check_output('CONN=`rclone config show | grep -w "\[%s\]"`; if [ -z "$CONN" ]; then echo false; else echo true; fi' % conn_name, shell=True).decode('utf-8').strip('\n') == 'false':
+        os.system('umount %s' % conn_name)
+        os.system('rclone config delete %s' % conn_name)
+        cmd = InteractiveCMD('rclone config')
+        cmd.start(verbose=verbose)
+        cmd.inputs(['n',conn_name, '40', 'http://127.0.0.1:%s'%server_port, '5', 'admin', 'y', 'admin', 'admin', '', 'n', 'y', 'q'], intervel=3, verbose=verbose)
+        os.system('nohup rclone mount --allow-non-empty --vfs-cache-mode writes %s: %s/%s >%s/rclone_aliyundrive.log 2>&1 &' % (conn_name, mount_prefix, conn_name, log_dir))
+        if verbose: print('Check rclone log in %s/rclone_aliyundrive.log' % log_dir)
     ONEDRIVE_PATH = '%s/%s' % (mount_prefix, conn_name)
-    mkdir(ONEDRIVE_PATH)
+    mkdir(ONEDRIVE_PATH, verbose=verbose)
     DATA_ROOT_PATH = os.path.join(ONEDRIVE_PATH, 'notebooks/data')
 
 
